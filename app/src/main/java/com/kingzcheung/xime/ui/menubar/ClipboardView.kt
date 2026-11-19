@@ -1,0 +1,1052 @@
+package com.kingzcheung.xime.ui.menubar
+
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCut
+import androidx.compose.material.icons.filled.Create
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.DoneAll
+import androidx.compose.material.icons.filled.PushPin
+import androidx.compose.material.icons.outlined.StarBorder
+import androidx.compose.material.icons.twotone.Image
+import androidx.compose.material.icons.twotone.Sync
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
+import com.kingzcheung.xime.R
+import com.kingzcheung.xime.clipboard.ClipboardDragSender
+import com.kingzcheung.xime.clipboard.ClipboardItem
+import com.kingzcheung.xime.clipboard.clipboardLongPressDrag
+import com.kingzcheung.xime.i18n.tr
+import com.kingzcheung.xime.ui.CLIPBOARD_CARD_MAX_PX
+import com.kingzcheung.xime.ui.CLIPBOARD_PREVIEW_MAX_PX
+import com.kingzcheung.xime.ui.keyboard.WIDE_CONTAINER_WIDTH
+import com.kingzcheung.xime.ui.keyboard.tolerantClick
+import com.kingzcheung.xime.ui.rememberClipboardImageRequest
+import com.kingzcheung.xime.viewmodel.KeyboardViewModel
+import java.io.File
+
+@Composable
+fun ClipboardView(
+    clipboardItems: List<ClipboardItem>,
+    quickSendItems: List<ClipboardItem>,
+    selectedTab: Int,
+    backgroundColor: Color,
+    keyTextColor: Color,
+    keyBgColor: Color,
+    viewModel: KeyboardViewModel,
+    onSelectItem: (String) -> Unit,
+    onSplitWords: (String, Long) -> Unit,
+    /** 快捷发送条目点选：只上屏，不写回系统剪贴板；未提供时回退到 [onSelectItem]。 */
+    onQuickSendSelect: ((String) -> Unit)? = null,
+    onBack: (() -> Unit)? = null,
+    onClipboardTabChange: ((Int) -> Unit)? = null,
+    bottomPaddingDp: Int = 0,
+    modifier: Modifier = Modifier,
+    onQuickSendAddClick: (() -> Unit)? = null,
+    onQuickSendEditItem: ((Long, String, String) -> Unit)? = null,
+    /** 图片条目点选（直插/回写由服务层处理）。 */
+    onSelectImage: ((ClipboardItem) -> Unit)? = null,
+    /** 图片条目 → 本地绝对文件（不存在返回 null，用于缩略图与拖拽）。 */
+    imageFileOf: ((ClipboardItem) -> File?)? = null,
+    /** 拖拽发送已成功启动（收起输入法，露出目标应用的接收区域）。 */
+    onDragSendStarted: (() -> Unit)? = null,
+) {
+    // 卡片/格子背景：与菜单项背景一致（keyBgColor，浅色纯白、深色跟随 keyboard.colors）
+    val itemBgColor = keyBgColor
+    val textColor = keyTextColor
+    val subTextColor = keyTextColor.copy(alpha = 0.65f)
+    val accentColor = MaterialTheme.colorScheme.primary
+    // 图标按钮容器色：surface 与 primary 的混合色调（带种子色但不过于强烈）
+    val iconButtonContainer = androidx.compose.ui.graphics.lerp(
+        MaterialTheme.colorScheme.surface,
+        MaterialTheme.colorScheme.primary,
+        0.35f
+    )
+    var menuAnchor by remember { mutableStateOf<MenuAnchor?>(null) }
+    var isMultiSelect by remember { mutableStateOf(false) }
+    var selectedIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
+    var showClearConfirm by remember { mutableStateOf(false) }
+    // 长按菜单浮层里的预览卡片发起拖拽时，需要宿主 View 调 startDragAndDrop
+    val view = LocalView.current
+
+    fun exitMultiSelect() {
+        isMultiSelect = false
+        selectedIds = emptySet()
+    }
+
+    // 布局按父容器真实宽度自适应（悬浮卡片/键盘收窄/分屏的容器宽 ≠ 屏幕宽），
+    // 不读屏幕方向：宽容器（横屏全屏）用大边距，其余按竖屏形态
+    BoxWithConstraints(modifier = modifier) {
+        val isWide = maxWidth >= WIDE_CONTAINER_WIDTH
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(backgroundColor)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                // 返回按钮与候选栏 logo 同位（8dp），不再随宽容器加大缩进
+                .padding(horizontal = 8.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(28.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(iconButtonContainer)
+                    .clickable { onBack?.invoke() },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                    contentDescription = tr(R.string.s_guanbimianban),
+                    tint = accentColor,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.width(8.dp))
+
+            Box(
+                modifier = Modifier
+                    .height(28.dp)
+                    .clip(RoundedCornerShape(13.dp))
+                    .background(iconButtonContainer)
+                    .padding(2.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxHeight(),
+                    horizontalArrangement = Arrangement.spacedBy(0.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .clip(RoundedCornerShape(11.dp))
+                            .background(if (selectedTab == 0) accentColor else Color.Transparent)
+                            .clickable { onClipboardTabChange?.invoke(0) }
+                            .padding(horizontal = 12.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = tr(R.string.s_jiantieban),
+                            color = if (selectedTab == 0) Color.White else textColor,
+                            fontSize = 11.sp,
+                            fontWeight = if (selectedTab == 0) FontWeight.Medium else FontWeight.Normal
+                        )
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .clip(RoundedCornerShape(11.dp))
+                            .background(if (selectedTab == 1) accentColor else Color.Transparent)
+                            .clickable { onClipboardTabChange?.invoke(1) }
+                            .padding(horizontal = 12.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = tr(R.string.s_kuaijiefasong),
+                            color = if (selectedTab == 1) Color.White else textColor,
+                            fontSize = 11.sp,
+                            fontWeight = if (selectedTab == 1) FontWeight.Medium else FontWeight.Normal
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.weight(1f))
+
+            if (selectedTab == 0) {
+                if (isMultiSelect) {
+                    Box(
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(CircleShape)
+                            .background(iconButtonContainer)
+                            .clickable { exitMultiSelect() },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = tr(R.string.s_tuichuduoxuan),
+                            tint = accentColor,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                } else {
+                    if (clipboardItems.isNotEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clip(CircleShape)
+                                .background(iconButtonContainer)
+                                .clickable { showClearConfirm = true },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.DeleteSweep,
+                                contentDescription = tr(R.string.s_qingkongjiantieban),
+                                tint = accentColor,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (selectedTab == 1 && onQuickSendAddClick != null) {
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .background(iconButtonContainer)
+                        .clickable(onClick = onQuickSendAddClick),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = tr(R.string.s_tianjiakuaijiefasong),
+                        tint = accentColor,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+        }
+
+        val pagerState = rememberPagerState(
+            initialPage = selectedTab,
+            pageCount = { 2 }
+        )
+
+        LaunchedEffect(selectedTab) {
+            pagerState.animateScrollToPage(selectedTab)
+        }
+
+        LaunchedEffect(pagerState.currentPage) {
+            if (pagerState.currentPage != selectedTab) {
+                onClipboardTabChange?.invoke(pagerState.currentPage)
+            }
+        }
+
+        HorizontalPager(
+            state = pagerState,
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+        ) { page ->
+            if (page == 0) {
+                ClipboardTabContent(
+                    items = clipboardItems,
+                    itemBgColor = itemBgColor,
+                    textColor = textColor,
+                    subTextColor = subTextColor,
+                    accentColor = accentColor,
+                    onSelect = onSelectItem,
+                    onRemove = { id -> viewModel.removeClipboardItem(id) },
+                    onAddToQuickSend = { id -> viewModel.addToQuickSend(id) },
+                    onSplitWords = onSplitWords,
+                    onLongPressItem = { item, isLeftColumn ->
+                        menuAnchor = MenuAnchor(item, isLeftColumn, tab = 0)
+                    },
+                    isMultiSelect = isMultiSelect,
+                    selectedIds = selectedIds,
+                    onToggleSelect = { id ->
+                        selectedIds = if (id in selectedIds) selectedIds - id else selectedIds + id
+                    },
+                    onExitMultiSelect = { exitMultiSelect() },
+                    onSelectImage = onSelectImage,
+                    imageFileOf = imageFileOf,
+                )
+            } else {
+                QuickSendTabContent(
+                    items = quickSendItems,
+                    itemBgColor = itemBgColor,
+                    textColor = textColor,
+                    subTextColor = subTextColor,
+                    accentColor = accentColor,
+                    viewModel = viewModel,
+                    onSelect = onQuickSendSelect ?: onSelectItem,
+                    onQuickSendAddClick = onQuickSendAddClick,
+                    onQuickSendEditItem = onQuickSendEditItem,
+                    onDragSendStarted = onDragSendStarted,
+                    onLongPressItem = { item, isLeftColumn ->
+                        menuAnchor = MenuAnchor(item, isLeftColumn, tab = 1)
+                    }
+                )
+            }
+        }
+
+        if (isMultiSelect) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = tr(R.string.s_yixuan_xiang, selectedIds.size),
+                    color = textColor,
+                    fontSize = 13.sp
+                )
+                Spacer(modifier = Modifier.weight(1f))
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(
+                            if (selectedIds.isNotEmpty()) MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                        )
+                        .clickable(enabled = selectedIds.isNotEmpty()) {
+                            viewModel.removeClipboardItems(selectedIds.toList())
+                            exitMultiSelect()
+                        }
+                        .padding(horizontal = 14.dp, vertical = 7.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = tr(R.string.s_shanchu),
+                            color = Color.White,
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(if (isWide) 15.dp else bottomPaddingDp.dp))
+
+        menuAnchor?.let { anchor ->
+            val menuItems = if (anchor.tab == 0) {
+                if (anchor.item.isImage) {
+                    // 图片条目：拆词/快捷发送无意义（文本操作），只剩多选 + 删除
+                    listOf(
+                        LongPressMenuEntry(
+                            icon = Icons.Default.DoneAll,
+                            label = tr(R.string.s_duoxuan),
+                            onClick = {
+                                isMultiSelect = true
+                                selectedIds = emptySet()
+                            }
+                        ),
+                        LongPressMenuEntry(
+                            icon = Icons.Default.Delete,
+                            label = tr(R.string.s_shanchu),
+                            tint = MaterialTheme.colorScheme.error,
+                            onClick = {
+                                viewModel.removeClipboardItem(anchor.item.id)
+                            }
+                        )
+                    )
+                } else {
+                    listOf(
+                        LongPressMenuEntry(
+                            icon = Icons.Default.ContentCut,
+                            label = tr(R.string.s_chaici),
+                            onClick = {
+                                onSplitWords(anchor.item.text, anchor.item.id)
+                            }
+                        ),
+                        LongPressMenuEntry(
+                            icon = Icons.Outlined.StarBorder,
+                            label = tr(R.string.s_kuaijie),
+                            onClick = {
+                                viewModel.addToQuickSend(anchor.item.id)
+                            }
+                        ),
+                        LongPressMenuEntry(
+                            icon = Icons.Default.DoneAll,
+                            label = tr(R.string.s_duoxuan),
+                            onClick = {
+                                isMultiSelect = true
+                                selectedIds = emptySet()
+                            }
+                        ),
+                        LongPressMenuEntry(
+                            icon = Icons.Default.Delete,
+                            label = tr(R.string.s_shanchu),
+                            tint = MaterialTheme.colorScheme.error,
+                            onClick = {
+                                viewModel.removeClipboardItem(anchor.item.id)
+                            }
+                        )
+                    )
+                }
+            } else {
+                listOfNotNull(
+                    LongPressMenuEntry(
+                        icon = Icons.Filled.PushPin,
+                        label = tr(R.string.s_zhiding),
+                        onClick = {
+                            viewModel.togglePinQuickSend(anchor.item.id)
+                        }
+                    ),
+                    onQuickSendEditItem?.let { edit ->
+                        LongPressMenuEntry(
+                            icon = Icons.Default.Create,
+                            label = tr(R.string.s_bianji),
+                            onClick = {
+                                edit(anchor.item.id, anchor.item.text, anchor.item.code)
+                            }
+                        )
+                    },
+                    LongPressMenuEntry(
+                        icon = Icons.Default.Delete,
+                        label = tr(R.string.s_shanchu),
+                        tint = MaterialTheme.colorScheme.error,
+                        onClick = {
+                            viewModel.removeQuickSendItem(anchor.item.id)
+                        }
+                    )
+                )
+            }
+            val previewFile = if (anchor.item.isImage) imageFileOf?.invoke(anchor.item) else null
+            LongPressMenuOverlay(
+                text = if (anchor.item.isImage) clipboardImageLabel(anchor.item) else anchor.item.text,
+                isLeftColumn = anchor.isLeftColumn,
+                backgroundColor = backgroundColor,
+                contentBgColor = itemBgColor,
+                textColor = textColor,
+                subTextColor = subTextColor,
+                // 图片条目给出真实预览；文件已被配额淘汰时为 null，退回文案。
+                imageFile = previewFile,
+                // 用入库时记录的宽高决定预览框尺寸：不读解码后的 intrinsic（加载前后不跳动），
+                // 也让 1:80 这种长截图有稳定的框可用
+                imageAspectRatio = if (anchor.item.width > 0 && anchor.item.height > 0) {
+                    anchor.item.width.toFloat() / anchor.item.height
+                } else 0f,
+                dragKey = anchor.item.id,
+                // 拖拽发送挂在预览卡片上：长按菜单已弹出，再按住预览拖出即发送。
+                // 列表卡片本身只负责点击/长按，不再被拖拽抢占长按。
+                onStartDrag = if (isMultiSelect) null else {
+                    {
+                        val ok = ClipboardDragSender.startDragAndDrop(view, anchor.item, previewFile)
+                        if (ok) {
+                            // 收起浮层，露出目标应用的接收区域（与列表直接拖拽的行为一致）
+                            menuAnchor = null
+                            onDragSendStarted?.invoke()
+                        }
+                        ok
+                    }
+                },
+                onDismiss = { menuAnchor = null },
+                menuItems = menuItems
+            )
+        }
+
+        if (showClearConfirm) {
+            ClearClipboardConfirmOverlay(
+                itemCount = clipboardItems.size,
+                backgroundColor = backgroundColor,
+                cardBgColor = itemBgColor,
+                textColor = textColor,
+                subTextColor = subTextColor,
+                onCancel = { showClearConfirm = false },
+                onConfirm = {
+                    showClearConfirm = false
+                    viewModel.clearClipboard()
+                }
+            )
+        }
+    }
+    }
+}
+
+@Composable
+private fun ClearClipboardConfirmOverlay(
+    itemCount: Int,
+    backgroundColor: Color,
+    cardBgColor: Color,
+    textColor: Color,
+    subTextColor: Color,
+    onCancel: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(backgroundColor)
+            .clickable(onClick = onCancel),
+        contentAlignment = Alignment.Center
+    ) {
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = cardBgColor
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(horizontal = 24.dp, vertical = 20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = tr(R.string.s_qingkongjiantieban),
+                    color = textColor,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Medium
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = tr(R.string.s_jiangshanchuquanbu_tiaojiantie_12f1e, itemCount),
+                    color = subTextColor,
+                    fontSize = 13.sp
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                            .clickable(onClick = onCancel)
+                            .padding(horizontal = 18.dp, vertical = 7.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = tr(R.string.s_quxiao),
+                            color = textColor,
+                            fontSize = 13.sp
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(MaterialTheme.colorScheme.error)
+                            .clickable(onClick = onConfirm)
+                            .padding(horizontal = 18.dp, vertical = 7.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = tr(R.string.s_qingkong),
+                            color = Color.White,
+                            fontSize = 13.sp
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+internal data class MenuAnchor(
+    val item: ClipboardItem,
+    val isLeftColumn: Boolean,
+    val tab: Int
+)
+
+/** 预览图容器的高度区间（dp）：下限防超宽图压成一条线，上限防超高图顶爆浮层。 */
+private val MIN_PREVIEW_HEIGHT = 48.dp
+private val MAX_PREVIEW_HEIGHT = 200.dp
+
+/** Fit 之后短边低于此值（dp）就改用裁切填充——否则细到看不出是张图。 */
+private val MIN_LEGIBLE_EDGE = 28.dp
+
+/**
+ * 长按菜单卡片的宽度（dp）：**固定值，不随容器/屏幕变化**——同一套菜单在任何设备、
+ * 任何键盘宽度下宽度一致，剩余空间全部给左侧内容预览。
+ *
+ * 取值依据：菜单项固定消耗「图标 18dp + 间距 10dp + 左右内边距 13×2dp」= 54dp，
+ * 两字标签在默认字号下约 28dp、放大 1.6 倍时约 45dp，故 112dp 可覆盖到 1.6 倍字号仍单行。
+ * 实际使用时还会乘系统字体缩放并限制不超过容器的 62%（见 [LongPressMenuOverlay]）。
+ */
+private val MENU_CARD_WIDTH = 112.dp
+
+data class LongPressMenuEntry(
+    val icon: ImageVector,
+    val label: String,
+    val tint: Color? = null,
+    val onClick: () -> Unit
+)
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun ClipboardTabContent(
+    items: List<ClipboardItem>,
+    itemBgColor: Color,
+    textColor: Color,
+    subTextColor: Color,
+    accentColor: Color,
+    onSelect: (String) -> Unit,
+    onRemove: (Long) -> Unit,
+    onAddToQuickSend: (Long) -> Unit,
+    onSplitWords: (String, Long) -> Unit,
+    onLongPressItem: (ClipboardItem, Boolean) -> Unit,
+    isMultiSelect: Boolean = false,
+    selectedIds: Set<Long> = emptySet(),
+    onToggleSelect: (Long) -> Unit = {},
+    onExitMultiSelect: () -> Unit = {},
+    onSelectImage: ((ClipboardItem) -> Unit)? = null,
+    imageFileOf: ((ClipboardItem) -> File?)? = null,
+) {
+    if (items.isEmpty()) {
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = tr(R.string.s_jiantiebanweikong),
+                color = subTextColor,
+                fontSize = 13.sp
+            )
+        }
+    } else {
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(2),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 10.dp, vertical = 2.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            itemsIndexed(items, key = { _, it -> it.id }) { index, item ->
+                val highlighted = isMultiSelect && item.id in selectedIds
+                val onClick: () -> Unit = {
+                    if (isMultiSelect) {
+                        onToggleSelect(item.id)
+                    } else if (item.isImage) {
+                        onSelectImage?.invoke(item)
+                    } else {
+                        onSelect(item.text)
+                    }
+                }
+                val onLongClick: () -> Unit = {
+                    if (isMultiSelect) onExitMultiSelect()
+                    else onLongPressItem(item, index % 2 == 0)
+                }
+                // 列表卡片只负责点击/长按：长按即弹菜单，拖拽发送挪到菜单里的预览卡片上
+                // （长按与拖拽共用一个手势时，用户必须先长按再拖，菜单反而要等抬手才出）。
+                if (item.isImage) {
+                    ClipboardImageCard(
+                        item = item,
+                        highlighted = highlighted,
+                        bgColor = itemBgColor,
+                        textColor = textColor,
+                        subTextColor = subTextColor,
+                        accentColor = accentColor,
+                        file = imageFileOf?.invoke(item),
+                        modifier = Modifier.height(62.dp),
+                        onClick = onClick,
+                        onLongClick = onLongClick,
+                    )
+                } else {
+                    GridItemCard(
+                        text = item.text,
+                        highlighted = highlighted,
+                        bgColor = itemBgColor,
+                        textColor = textColor,
+                        accentColor = accentColor,
+                        modifier = Modifier.height(62.dp),
+                        onClick = onClick,
+                        onLongClick = onLongClick,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** 图片条目的菜单/长按浮层文案（图片没有可展示的文本）。 */
+internal fun clipboardImageLabel(item: ClipboardItem): String {
+    val size = if (item.width > 0 && item.height > 0) " · ${item.width}×${item.height}" else ""
+    return tr(R.string.s_tupian, size)
+}
+
+/**
+ * 剪贴板图片卡片：缩略图（Coil 按目标尺寸降采样，不整图解码）。
+ * 文件缺失（配额淘汰/被清理）时显示占位文案，点选不再上屏。
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun ClipboardImageCard(
+    item: ClipboardItem,
+    highlighted: Boolean,
+    bgColor: Color,
+    textColor: Color,
+    subTextColor: Color,
+    accentColor: Color,
+    file: File?,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+) {
+    val shape = RoundedCornerShape(8.dp)
+    val bg = if (highlighted) accentColor.copy(alpha = 0.18f) else bgColor
+    Box(
+        modifier = modifier
+            .border(1.5.dp, if (highlighted) accentColor else Color.Transparent, shape)
+            .clip(shape)
+            .background(bg)
+            // 长按直接弹菜单（拖拽发送在菜单浮层的预览卡片上，见 ContentCard）。
+            // 用 tolerantClick 而非 combinedClickable：卡片位于 LazyVerticalGrid + HorizontalPager 内，
+            // 轻点的小位移会被父级手势判定吃掉（部分 ROM/高采样屏幕表现为“点了没反应”）。
+            // 长按震动由 tolerantClick 的 longPressHaptic 发（拖拽已不在这里，没人再发触觉）。
+            .tolerantClick(onClick = onClick, onLongClick = onLongClick, longPressHaptic = true)
+    ) {
+        if (file != null) {
+            AsyncImage(
+                // 显式上限：卡片约 165×62dp，按 512px 方框降采样解码（不整图进内存）
+                model = rememberClipboardImageRequest(file, CLIPBOARD_CARD_MAX_PX),
+                contentDescription = clipboardImageLabel(item),
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 10.dp, vertical = 9.dp),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Icon(
+                    imageVector = Icons.TwoTone.Image,
+                    contentDescription = null,
+                    tint = subTextColor,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = tr(R.string.s_tupianyiqingli),
+                    color = subTextColor,
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun GridItemCard(
+    text: String,
+    highlighted: Boolean,
+    bgColor: Color,
+    textColor: Color,
+    accentColor: Color,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+) {
+    val shape = RoundedCornerShape(8.dp)
+    val bg = if (highlighted) accentColor.copy(alpha = 0.18f) else bgColor
+    Column(
+        modifier = modifier
+            .border(1.5.dp, if (highlighted) accentColor else Color.Transparent, shape)
+            .clip(shape)
+            .background(bg)
+            // 长按直接弹菜单（拖拽发送在菜单浮层的预览卡片上，见 ContentCard）。
+            // 用 tolerantClick 而非 combinedClickable：卡片位于 LazyVerticalGrid + HorizontalPager 内，
+            // 轻点的小位移会被父级手势判定吃掉（部分 ROM/高采样屏幕表现为“点了没反应”）。
+            // 长按震动由 tolerantClick 的 longPressHaptic 发（拖拽已不在这里，没人再发触觉）。
+            .tolerantClick(onClick = onClick, onLongClick = onLongClick, longPressHaptic = true)
+            .padding(horizontal = 10.dp, vertical = 9.dp),
+        verticalArrangement = Arrangement.Center
+    ) {
+        Text(
+            text = text,
+            color = textColor,
+            fontSize = 14.sp,
+            lineHeight = 19.sp,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
+fun LongPressMenuOverlay(
+    text: String,
+    isLeftColumn: Boolean,
+    backgroundColor: Color,
+    contentBgColor: Color,
+    textColor: Color,
+    subTextColor: Color = textColor.copy(alpha = 0.65f),
+    imageFile: File? = null,
+    /** 原图宽高比（w/h）；<= 0 表示未知，预览按 3:2 兜底。 */
+    imageAspectRatio: Float = 0f,
+    /** 预览卡片上的长按拖拽发送；返回 true = 系统接管。null 表示该条目不可拖拽。 */
+    onStartDrag: (() -> Boolean)? = null,
+    dragKey: Any? = null,
+    onDismiss: () -> Unit,
+    menuItems: List<LongPressMenuEntry>,
+) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .background(backgroundColor)
+                .clickable(onClick = onDismiss)
+        )
+
+        // 菜单宽度固定：同一套菜单在任何屏幕/键盘宽度下都一样宽（不再按容器比例算，
+        // 否则大屏上菜单会跟着变宽），剩余空间全部给预览卡片。
+        // 仅随系统字体缩放适度变宽，且不超过容器的 62%——防止极窄键盘下顶出屏幕。
+        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+            val fontScale = LocalDensity.current.fontScale.coerceIn(1f, 1.6f)
+            val menuWidth = (MENU_CARD_WIDTH * fontScale)
+                .coerceAtMost(maxWidth * 0.62f)
+            val preview: @Composable () -> Unit = {
+                ContentCard(
+                    text = text,
+                    bgColor = contentBgColor,
+                    textColor = textColor,
+                    subTextColor = subTextColor,
+                    imageFile = imageFile,
+                    imageAspectRatio = imageAspectRatio,
+                    onStartDrag = onStartDrag,
+                    dragKey = dragKey
+                )
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 10.dp, vertical = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                // 预览卡片与菜单卡片都在这条浮层里垂直居中：两者高度通常不等
+                // （预览随图片/文本长度变，菜单固定四项），贴顶会让视觉重心偏上。
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (isLeftColumn) {
+                    Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                        preview()
+                    }
+                    MenuCard(
+                        modifier = Modifier.width(menuWidth),
+                        menuItems = menuItems,
+                        cardBgColor = contentBgColor,
+                        onDismiss = onDismiss
+                    )
+                } else {
+                    MenuCard(
+                        modifier = Modifier.width(menuWidth),
+                        menuItems = menuItems,
+                        cardBgColor = contentBgColor,
+                        onDismiss = onDismiss
+                    )
+                    Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                        preview()
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ContentCard(
+    text: String,
+    bgColor: Color,
+    textColor: Color,
+    subTextColor: Color,
+    imageFile: File? = null,
+    /** 原图宽高比（w/h）；<= 0 表示未知，按 3:2 兜底。 */
+    imageAspectRatio: Float = 0f,
+    onStartDrag: (() -> Boolean)? = null,
+    dragKey: Any? = null,
+) {
+    // 长按预览 → 拖出即发送；长按后原地抬起不做事（菜单已经开着，不需要再弹一次）
+    val dragModifier = if (onStartDrag != null) {
+        Modifier.clipboardLongPressDrag(
+            key = dragKey,
+            enabled = true,
+            onLongPress = {},
+            onStartDrag = onStartDrag,
+        )
+    } else {
+        Modifier
+    }
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(dragModifier),
+        shape = RoundedCornerShape(8.dp),
+        color = bgColor
+    ) {
+        if (imageFile != null) {
+            // 图片条目：给真正的缩略预览，分辨率作为底部说明（无预览时只有一行「图片 · 宽×高」，
+            // 用户根本分不清是哪张图）。解码上限显式给死，避免大图整图进内存。
+            // 尺寸由**入库时记录的宽高**决定，不依赖解码后的 intrinsic size：
+            // 加载前后容器尺寸一致（不跳动），且极端比例的图不会算出离谱的高度。
+            Column(modifier = Modifier.padding(6.dp)) {
+                BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                    val ratio = if (imageAspectRatio > 0f) imageAspectRatio else 1.5f
+                    // 按原图比例算出的高度，夹在 [48dp, 200dp]：既不会把浮层顶爆，
+                    // 也不会让超宽图压成一条几像素高的横线。
+                    val naturalHeight = maxWidth / ratio
+                    val boxHeight = naturalHeight.coerceIn(MIN_PREVIEW_HEIGHT, MAX_PREVIEW_HEIGHT)
+                    // Fit 之后短边还剩多少：小于 MIN_LEGIBLE_EDGE 就别 Fit 了
+                    // （1:80 的长截图 Fit 出来只有两三像素宽，等于看不见），改裁切填充。
+                    val fittedShortEdge: Dp? = when {
+                        naturalHeight > MAX_PREVIEW_HEIGHT -> MAX_PREVIEW_HEIGHT * ratio
+                        naturalHeight < MIN_PREVIEW_HEIGHT -> maxWidth / ratio
+                        else -> null // 正好铺满，不需要判定
+                    }
+                    val crop = fittedShortEdge != null && fittedShortEdge < MIN_LEGIBLE_EDGE
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(boxHeight)
+                            .clip(RoundedCornerShape(6.dp))
+                    ) {
+                        AsyncImage(
+                            // 解码框取卡片实际像素与上限的较小值：长图不会被按原长边解码
+                            model = rememberClipboardImageRequest(imageFile, CLIPBOARD_PREVIEW_MAX_PX),
+                            contentDescription = text,
+                            contentScale = if (crop) ContentScale.Crop else ContentScale.Fit,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = text,
+                    color = subTextColor,
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(horizontal = 4.dp)
+                )
+            }
+        } else {
+            Text(
+                text = text,
+                color = textColor,
+                fontSize = 14.sp,
+                lineHeight = 20.sp,
+                maxLines = 8,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun MenuCard(
+    menuItems: List<LongPressMenuEntry>,
+    cardBgColor: Color,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(12.dp),
+        color = cardBgColor
+    ) {
+        Column(modifier = Modifier.padding(vertical = 6.dp)) {
+            menuItems.forEachIndexed { index, entry ->
+                if (index > 0) {
+                    HorizontalDivider(
+                        modifier = Modifier.padding(horizontal = 12.dp),
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
+                    )
+                }
+                LongPressMenuItem(
+                    icon = entry.icon,
+                    label = entry.label,
+                    tint = entry.tint ?: MaterialTheme.colorScheme.onSurface,
+                    onClick = {
+                        onDismiss()
+                        entry.onClick()
+                    }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun LongPressMenuItem(
+    icon: ImageVector,
+    label: String,
+    tint: Color = MaterialTheme.colorScheme.onSurface,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 13.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = tint,
+            modifier = Modifier.size(18.dp)
+        )
+        Spacer(modifier = Modifier.width(10.dp))
+        Text(
+            text = label,
+            color = tint,
+            fontSize = 14.sp,
+            // 菜单项一句话就是一句话：宁可省略也不换行，否则窄键盘下「拆词」会竖排成两行
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}

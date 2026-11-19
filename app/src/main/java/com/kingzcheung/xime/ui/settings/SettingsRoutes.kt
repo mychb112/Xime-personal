@@ -1,0 +1,25 @@
+package com.kingzcheung.xime.ui.settings
+
+object SettingsRoutes {
+    const val Main = "main"
+    const val Schema = "schema"
+    const val SchemaLocal = "schema_local"
+    const val Theme = "theme"
+    const val KeyEffect = "key_effect"
+    const val LayoutDisplay = "layout_display"
+    const val Dictionary = "dictionary"
+    const val DictionaryUserDict = "dictionary_user_dict"
+    const val DictionaryCustomPhrase = "dictionary_custom_phrase"
+    const val DictionaryImported = "dictionary_imported"
+    const val FuzzyPinyin = "fuzzy_pinyin"
+    const val About = "about"
+    const val Developer = "developer"
+    const val StorageSpace = "storage_space"
+    const val Privacy = "privacy"
+    const val Licenses = "licenses"
+    const val LogViewer = "log_viewer"
+    const val HandwritingCapture = "handwriting_capture"
+    const val Clipboard = "clipboard"
+    const val SchemaDictBrowser = "schema_dict_browser"
+    const val RimeFileBrowser = "rime_file_browser"
+}

@@ -1,0 +1,166 @@
+# Rime schema
+# encoding: utf-8
+# cmg1426AM 独立双拼（14 键）
+# 方案来源：cmg1426AM独立双拼方案.ini
+# 键位来源：QW/ER/TY/UI/OP、A/SD/FG/HJ/KL、ZX/CV/BN/M
+# 内置版本：3.6.12（修正 U→V 与 V→N 的规则顺序）
+#
+# 拼写运算分三步：
+#   1. 全拼拼音 -> cmg1426AM 双拼码（声母码 + 韵母码，各一个字母）
+#   2. 派生大写副本，避免污染原始小写拼写
+#   3. xlit 把双拼码字母投到 14 键代表字母（组内首字母）
+# 同组两键在 Rime 里会合并为同一代表码，靠词库/上下文消歧，与项目内置 14/17/18 键方案一致。
+schema:
+  schema_id: cmg1426AM
+  name: CMG
+  version: "1.0"
+  description: |
+    cmg1426AM 独立双拼方案，14 键合并键布局。
+    基于 pinyin_simp 词库，全拼码经拼写运算派生为双拼按键序列。
+
+switches:
+  - name: ascii_mode
+    reset: 0
+    states: [ 中文, 西文 ]
+  - name: full_shape
+    states: [ 半角, 全角 ]
+  - name: ascii_punct
+    reset: 0
+    states: [ 。，, ．， ]
+
+engine:
+  processors:
+    - ascii_composer
+    - recognizer
+    - key_binder
+    - speller
+    - punctuator
+    - selector
+    - navigator
+    - express_editor
+  segmentors:
+    - ascii_segmentor
+    - matcher
+    - abc_segmentor
+    - punct_segmentor
+    - fallback_segmentor
+  translators:
+    - punct_translator
+    - script_translator
+    - reverse_lookup_translator
+    - lua_translator@*uuid
+
+speller:
+  alphabet: zyxwvutsrqponmlkjihgfedcba
+  delimiter: " '"
+  algebra:
+    # 简拼与容错规则（与 pinyin_simp / 内置合并键方案一致）
+    - abbrev/^([a-z]).+$/$1/
+    - abbrev/^([zcs]h).+$/$1/
+    - derive/^([nl])ue$/$1ve/
+    - derive/^([jqxy])u/$1v/
+    - derive/un$/uen/
+    - derive/ui$/uei/
+    - derive/iu$/iou/
+    - derive/([aeiou])ng$/$1gn/
+    - derive/([dtngkhrzcs])o(u|ng)$/$1o/
+    - derive/ong$/on/
+    - derive/ao$/oa/
+    - derive/([iu])a(o|ng?)$/a$1$2/
+
+    # 先把全拼码复制成大写副本，后续规则只处理大写，输入的小写代表码不受影响
+    - derive/(.*)/\U$1/
+
+    # 零声母音节（[yinjie]）
+    - xform/^A$/EA/
+    - xform/^AI$/EZ/
+    - xform/^AN$/ES/
+    - xform/^ANG$/ED/
+    - xform/^AO$/OK/
+    - xform/^E$/EE/
+    - xform/^EI$/OB/
+    - xform/^EN$/EF/
+    - xform/^ENG$/EG/
+    - xform/^O$/OO/
+    - xform/^OU$/OP/
+
+    # 多音素声母（[sheng]：zh=i、ch=v、sh=a）
+    - xform/^ZH(.*)$/I$1/
+    - xform/^CH(.*)$/V$1/
+    - xform/^SH(.*)$/A$1/
+
+    # 韵母 -> 双拼码：保留首位声母码，只改写其后的韵母；长韵母优先
+    - xform/^(.)(.*)UANG$/$1$2Q/
+    - xform/^(.)(.*)IANG$/$1$2Q/
+    - xform/^(.)(.*)IONG$/$1$2W/
+    - xform/^(.)(.*)UAN$/$1$2R/
+    - xform/^(.)(.*)VAN$/$1$2R/
+    - xform/^(.)(.*)UAI$/$1$2M/
+    - xform/^(.)(.*)IAN$/$1$2M/
+    - xform/^(.)(.*)IAO$/$1$2L/
+    - xform/^(.)(.*)ANG$/$1$2D/
+    - xform/^(.)(.*)ENG$/$1$2G/
+    - xform/^(.)(.*)ING$/$1$2J/
+    - xform/^(.)(.*)ONG$/$1$2W/
+    - xform/^(.)(.*)AI$/$1$2Z/
+    - xform/^(.)(.*)EI$/$1$2B/
+    - xform/^(.)(.*)AO$/$1$2K/
+    - xform/^(.)(.*)OU$/$1$2P/
+    - xform/^(.)(.*)IU$/$1$2C/
+    - xform/^(.)(.*)IE$/$1$2N/
+    - xform/^(.)(.*)UE$/$1$2Y/
+    - xform/^(.)(.*)VE$/$1$2Y/
+    - xform/^(.)(.*)AN$/$1$2S/
+    - xform/^(.)(.*)EN$/$1$2F/
+    - xform/^(.)(.*)IN$/$1$2H/
+    - xform/^(.)(.*)UN$/$1$2T/
+    - xform/^(.)(.*)VN$/$1$2T/
+    - xform/^(.)(.*)UA$/$1$2M/
+    - xform/^(.)(.*)UO$/$1$2O/
+    - xform/^(.)(.*)IA$/$1$2X/
+    - xform/^(.)(.*)A$/$1$2A/
+    - xform/^(.)(.*)O$/$1$2O/
+    - xform/^(.)(.*)E$/$1$2E/
+    - xform/^(.)(.*)I$/$1$2I/
+    - xform/^(.)(.*)V$/$1$2N/
+    - xform/^(.)(.*)U$/$1$2V/
+    - xform/^(.)(.*)UI$/$1$2U/
+
+    # 折叠为 14 键代表字母（整键点击，无需左右半分）
+    - xlit/QWERTYUIOPASDFGHJKLZXCVBNM/qqeettuuooassffhhkkzzccbbm/
+
+translator:
+  dictionary: pinyin_simp
+  prism: cmg1426AM
+  packs:
+    - user_simp
+  spelling_hints: 8
+  preedit_format:
+    - xform/([nl])v/$1ü/
+    - xform/([nl])ue/$1üe/
+    - xform/([jqxy])v/$1u/
+
+reverse_lookup:
+  dictionary: stroke
+  enable_completion: true
+  prefix: "`"
+  suffix: "'"
+  tips: 〔笔画〕
+  preedit_format:
+    - xlit/hspnz/一丨丿丶乙/
+
+menu:
+  page_size: 5
+
+punctuator:
+  import_preset: default
+  __include: symbols:/punctuator
+
+key_binder:
+  import_preset: default
+
+recognizer:
+  import_preset: default
+  patterns:
+    punct: "^/([0-9]+[a-z]*|[a-z]+)$"
+    reverse_lookup: "`[a-z]*'?$"
